@@ -103,8 +103,9 @@ produce large payloads, so shared backstops apply:
 There is **no sandbox**: a snippet runs with the Editor's full privileges (filesystem, project assets,
 arbitrary .NET). That's acceptable because the only thing authoring snippets is the developer's own
 Claude session driving their own Editor — the trust boundary is the MCP connection itself, not the C#
-layer. The corollary: don't expose the plugin's port to untrusted networks (it binds dual-stack — see
-[001 — Known limitations](001-architecture.md#known-limitations--possible-next-steps)).
+layer. The plugin therefore binds only to `127.0.0.1` and requires the random per-Editor-session token
+from its local registry record on every POST. This blocks LAN clients and blind browser requests, but
+the configured MCP client is still fully trusted; review tool calls sourced from untrusted content.
 
 ## See also
 

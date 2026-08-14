@@ -10,19 +10,30 @@ import { InstanceRecord } from "./registry.js";
 export class ConnectionPool {
   private readonly byInstance = new Map<
     string,
-    { port: number; conn: UnityConnection }
+    { port: number; authToken: string; conn: UnityConnection }
   >();
 
   forInstance(rec: InstanceRecord): UnityConnection {
     const existing = this.byInstance.get(rec.instanceId);
-    if (existing && existing.port === rec.port) return existing.conn;
+    if (
+      existing &&
+      existing.port === rec.port &&
+      existing.authToken === rec.authToken
+    ) {
+      return existing.conn;
+    }
     if (existing) existing.conn.close();
 
     const conn = new UnityConnection({
-      baseUrl: `http://localhost:${rec.port}/`,
+      baseUrl: `http://127.0.0.1:${rec.port}/`,
+      authToken: rec.authToken,
       label: rec.name,
     });
-    this.byInstance.set(rec.instanceId, { port: rec.port, conn });
+    this.byInstance.set(rec.instanceId, {
+      port: rec.port,
+      authToken: rec.authToken,
+      conn,
+    });
     return conn;
   }
 

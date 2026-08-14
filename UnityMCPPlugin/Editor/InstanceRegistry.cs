@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEditor;
 using System;
 using System.IO;
 using System.Text;
@@ -13,7 +14,7 @@ namespace UnityMCP.Editor
     //
     // Multiple Unity Editors can run at once, each hosting its own HTTP server on its own dynamic
     // port (see UnityMCPConnection). There's no longer a fixed port to dial, so each Editor drops a
-    // small JSON record - { instanceId, name, projectPath, port, pid, unityVersion } - into a shared
+    // small JSON record - { instanceId, name, projectPath, port, authToken, pid, unityVersion } - into a shared
     // per-user directory. An MCP server lists that directory to enumerate running Editors and to
     // resolve a chosen instance name/id to its port. The record is (re)written whenever the server
     // binds (including after a domain reload, when the port is reclaimed from SessionState) and
@@ -25,9 +26,11 @@ namespace UnityMCP.Editor
     // per-OS, honoring a UNITYMCP_REGISTRY_DIR override.
     public static class InstanceRegistry
     {
+        private const string AuthTokenSessionKey = "UnityMCP.AuthToken";
         private static string cachedInstanceId;
         private static string cachedName;
         private static string cachedProjectPath;
+        private static string cachedAuthToken;
 
         // A short, stable hash of this project's root path. Stable across restarts and domain reloads,
         // so a client's selected instance keeps the same handle; also the record's filename.
@@ -36,6 +39,34 @@ namespace UnityMCP.Editor
         // Human-facing handle: the project folder name. May collide across unrelated projects that
         // share a leaf name - InstanceId disambiguates.
         public static string Name => cachedName ?? (cachedName = SafeLeaf(ProjectPath));
+
+        // Per-Editor-session capability used to authenticate every command. SessionState survives
+        // domain reloads but is cleared when the Editor process exits, so existing MCP processes can
+        // ride out recompiles without leaving a long-lived credential behind.
+        public static string AuthToken
+        {
+            get
+            {
+                // Write() initializes this on Unity's main thread before AcceptLoop starts. Requests
+                // run on worker threads and must use the cache: Unity's SessionState API throws when
+                // called off the main thread.
+                if (!string.IsNullOrEmpty(cachedAuthToken)) return cachedAuthToken;
+
+                string token = SessionState.GetString(AuthTokenSessionKey, "");
+                if (!string.IsNullOrEmpty(token))
+                {
+                    cachedAuthToken = token;
+                    return cachedAuthToken;
+                }
+
+                var bytes = new byte[32];
+                using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+                token = Convert.ToBase64String(bytes);
+                SessionState.SetString(AuthTokenSessionKey, token);
+                cachedAuthToken = token;
+                return cachedAuthToken;
+            }
+        }
 
         // The project root (parent of Assets), with forward slashes for a stable cross-tool id.
         public static string ProjectPath
@@ -105,6 +136,7 @@ namespace UnityMCP.Editor
                     name = Name,
                     projectPath = ProjectPath,
                     port,
+                    authToken = AuthToken,
                     pid = CurrentPid(),
                     unityVersion = Application.unityVersion,
                     startedAtUtc = DateTime.UtcNow.ToString("o"),

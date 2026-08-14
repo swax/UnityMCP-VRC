@@ -24,6 +24,8 @@ project's connection model.
   **dynamic port** and publishes itself to a shared registry, so you can run several projects at
   once and address each by name — while any number of Claude sessions drive the same Editor. No
   fixed-port race, no "connected-but-dead" zombie servers.
+- **Local and authenticated.** The Editor endpoint binds only to `127.0.0.1`, and every command must
+  carry a cryptographically random per-Editor-session token read from the local instance registry.
 - **Run real C#.** `execute_editor_command` runs LLM-authored C# (its own `using`s,
   classes, functions) with assembly references auto-discovered from everything loaded —
   UnityEngine, packages, VRChat/UdonSharp, Basis, project scripts — no hand-maintained list.
@@ -103,7 +105,8 @@ Claude session:
 Tools refuse to run until an instance is selected, so a call never lands in the wrong project. To pin
 a session to one project up front, set `UNITYMCP_INSTANCE=<name>` in the MCP server's `env` (then the
 agent never has to select). Discovery records live in `%LOCALAPPDATA%\UnityMCP\instances\` (override
-with `UNITYMCP_REGISTRY_DIR`); each Editor shows its name + `instanceId` in the Debug Window.
+with `UNITYMCP_REGISTRY_DIR`); they also carry the private session token used by the local MCP server,
+so don't copy or publish them. Each Editor shows its name + `instanceId` in the Debug Window.
 
 ## Troubleshooting
 
