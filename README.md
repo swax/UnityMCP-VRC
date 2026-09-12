@@ -108,6 +108,14 @@ agent never has to select). Discovery records live in `%LOCALAPPDATA%\UnityMCP\i
 with `UNITYMCP_REGISTRY_DIR`); they also carry the private session token used by the local MCP server,
 so don't copy or publish them. Each Editor shows its name + `instanceId` in the Debug Window.
 
+The plugin restricts the registry directory and token files to the current OS user. A custom
+`UNITYMCP_REGISTRY_DIR` must be a dedicated directory owned by that user; its permissions will be
+restricted too. Use the same directory for the Editor and MCP server.
+
+When upgrading from the unauthenticated transport, update the plugin in every Unity project,
+rebuild the MCP server, and restart your MCP client. Old plugins without a session token are not
+discovered by the updated server.
+
 ## Troubleshooting
 
 - **"Connected" in Claude but nothing in Unity?** The MCP badge only reflects the

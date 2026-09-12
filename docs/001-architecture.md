@@ -69,6 +69,11 @@ Several Editors can run at once, so there's no fixed port to dial. Discovery rep
 - **The registry directory** is computed identically by both sides, with a `UNITYMCP_REGISTRY_DIR`
   override: `%LOCALAPPDATA%\UnityMCP\instances` (Windows), `~/Library/Application Support/UnityMCP/instances`
   (macOS), `$XDG_RUNTIME_DIR`/`~/.local/state/UnityMCP/instances` (Linux).
+- **Private registry files.** Before publishing a token, `PrivateRegistryFile` restricts the directory
+  and temporary file to the current user: `0700`/`0600` on Unix, protected user-only ACLs on Windows.
+  Existing directories are secured on every write; a failure to set permissions aborts publication
+  and logs a warning. The override must name a dedicated user-owned directory, not a shared folder,
+  filesystem root, or directory symlink. Temporary files use unique names and are cleaned up on failure.
 - **Liveness is probed, not assumed.** `list_unity_instances` reads the directory and sends an authenticated
   `identity` POST to each port,
   confirming the response's `instanceId` matches the record (so a reused port can't masquerade as the

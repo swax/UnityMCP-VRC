@@ -423,8 +423,7 @@ namespace UnityMCP.Editor
                         payload = ClearLogPayload();
                         break;
                     case "identity":
-                        // Lets a client confirm which instance answers this port over POST; the GET
-                        // health check returns the same payload.
+                        // Lets an authenticated client confirm which instance answers this port.
                         payload = InstanceRegistry.Identity(boundPort);
                         break;
                     default:

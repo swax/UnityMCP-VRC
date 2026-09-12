@@ -104,7 +104,7 @@ namespace UnityMCP.Editor
             }
         }
 
-        // The payload returned by the GET health check and the "identity" command: enough for an MCP
+        // The payload returned by the authenticated "identity" command: enough for an MCP
         // server to confirm which instance answers a given port.
         public static object Identity(int port)
         {
@@ -127,9 +127,6 @@ namespace UnityMCP.Editor
         {
             try
             {
-                string dir = RegistryDir();
-                Directory.CreateDirectory(dir);
-
                 var record = new
                 {
                     instanceId = InstanceId,
@@ -142,12 +139,7 @@ namespace UnityMCP.Editor
                     startedAtUtc = DateTime.UtcNow.ToString("o"),
                 };
 
-                // Write to a temp file then move into place so a reader never observes a partial file.
-                string path = FilePath();
-                string tmp = path + ".tmp";
-                File.WriteAllText(tmp, JsonConvert.SerializeObject(record, Formatting.Indented));
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(tmp, path);
+                PrivateRegistryFile.WriteAllText(FilePath(), JsonConvert.SerializeObject(record, Formatting.Indented));
             }
             catch (Exception e)
             {
