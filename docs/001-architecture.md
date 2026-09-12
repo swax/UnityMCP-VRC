@@ -33,12 +33,15 @@ that's gone.
 ## Connection model
 
 - **Unity hosts; clients send requests.** Each Editor runs a `TcpListener` on an OS-assigned
-  **dynamic** port (dual-stack IPv4/IPv6); each connection carries **one** HTTP request and is then
+  **dynamic** port bound only to IPv4 loopback (`127.0.0.1`); each connection carries **one** HTTP request and is then
   closed. Any number of Claude sessions can drive the same Editor, and several Editors can run at
   once — see [discovery & multiple instances](#discovery--multiple-instances).
-- **Request/response.** A tool call is `POST /` with a JSON `{ type, data }` body; the plugin runs it
+- **Request/response.** A tool call is `POST /` with a JSON `{ type, data, authToken }` body; the plugin runs it
   and returns the result as the JSON response body. No id-correlation, no persistent connection — the
   response *is* the reply.
+- **Authenticated.** Each Editor generates a random 256-bit token that survives domain reloads but
+  rotates on process restart. The token is published only in the per-user registry record; every POST
+  is rejected unless it carries that token.
 - **Logs are pulled.** The plugin keeps a rolling console-log buffer; `get_logs` reads it on demand
   and `clear_logs` empties it. Nothing is pushed from Unity.
 
@@ -46,11 +49,11 @@ that's gone.
 
 | Direction       | Message                                                                   |
 | --------------- | ------------------------------------------------------------------------- |
-| client → Unity  | `POST / {"type":"executeEditorCommand","data":{"code":"…"}}`              |
+| client → Unity  | `POST / {"type":"executeEditorCommand","data":{"code":"…"},"authToken":"…"}` |
 | Unity → client  | `200 OK` + the result payload as the JSON body                            |
 | client → Unity  | `POST /` with type `getEditorState` · `takeScreenshot` · `getGameObjectDetails` · `getLogs` · `clearLogs` · `identity` |
-| Unity → client  | `400`/`500` + `{ "error": … }` for an unknown type or a handler failure   |
-| any → Unity     | `GET` / `HEAD /` → `200` identity payload `{status, server, instanceId, name, projectPath, port, …}` (liveness + identity probe); any other method → `405` |
+| Unity → client  | `401` for a missing/invalid token; `400`/`500` for an unknown type or handler failure |
+| local client → Unity | `GET` / `HEAD /` → generic `{status, server}` health response; any other method → `405` |
 
 ## Discovery & multiple instances
 
@@ -60,13 +63,19 @@ Several Editors can run at once, so there's no fixed port to dial. Discovery rep
   so the port is stable across domain reloads (the process lives on; only managed state resets) and a
   selected instance stays reachable at the same address after a recompile.
 - **Self-registration.** The plugin writes a JSON record — `{ instanceId, name, projectPath, port,
-  pid, unityVersion }` — to a shared per-user directory (`InstanceRegistry`). `instanceId` is a short
+  authToken, pid, unityVersion }` — to a shared per-user directory (`InstanceRegistry`). `instanceId` is a short
   stable hash of the project path (also the file name); `name` is the project-folder leaf. The record
   is rewritten on every (re)bind and deleted on quit; a crash leaves it orphaned.
 - **The registry directory** is computed identically by both sides, with a `UNITYMCP_REGISTRY_DIR`
   override: `%LOCALAPPDATA%\UnityMCP\instances` (Windows), `~/Library/Application Support/UnityMCP/instances`
   (macOS), `$XDG_RUNTIME_DIR`/`~/.local/state/UnityMCP/instances` (Linux).
-- **Liveness is probed, not assumed.** `list_unity_instances` reads the directory and GETs each port,
+- **Private registry files.** Before publishing a token, `PrivateRegistryFile` restricts the directory
+  and temporary file to the current user: `0700`/`0600` on Unix, protected user-only ACLs on Windows.
+  Existing directories are secured on every write; a failure to set permissions aborts publication
+  and logs a warning. The override must name a dedicated user-owned directory, not a shared folder,
+  filesystem root, or directory symlink. Temporary files use unique names and are cleaned up on failure.
+- **Liveness is probed, not assumed.** `list_unity_instances` reads the directory and sends an authenticated
+  `identity` POST to each port,
   confirming the response's `instanceId` matches the record (so a reused port can't masquerade as the
   dead instance). A refused port means the record is orphaned, and it's deleted (self-heal).
 - **Selection is required.** A tool that talks to Unity resolves its target from the call's `instance`
@@ -205,6 +214,7 @@ receive loops or send locks to manage.
 | Setting                  | Value / location                                                            |
 | ------------------------ | --------------------------------------------------------------------------- |
 | Port                     | OS-assigned per Editor, pinned in `SessionState` across reloads; published in the registry |
+| Authentication token     | Random 256-bit value per Editor process; survives domain reloads in `SessionState`; never returned by MCP tools |
 | Registry directory       | `%LOCALAPPDATA%\UnityMCP\instances` (Win) · `~/Library/Application Support/UnityMCP/instances` (macOS) · `$XDG_RUNTIME_DIR`/`~/.local/state/UnityMCP/instances` (Linux); override `UNITYMCP_REGISTRY_DIR` |
 | Default instance         | `UNITYMCP_INSTANCE` (optional) seeds the session's selected instance                       |
 | Main-thread timeout      | `55s` (`EditorUtilities.MainThreadTimeoutMs`) — raise with the matching per-tool timeout if needed |
@@ -215,8 +225,8 @@ receive loops or send locks to manage.
 
 ## Known limitations / possible next steps
 
-- Binds all interfaces (dual-stack) — could restrict to loopback if LAN exposure matters. There's no
-  auth and `execute_editor_command` runs arbitrary C#, so don't expose the port to untrusted networks
+- `execute_editor_command` intentionally runs arbitrary C# without a sandbox. Loopback binding and a
+  per-session token protect the transport, but callers with legitimate MCP access remain fully trusted
   (see [005 — trust model](005-executing-csharp.md#trust-model)).
 - Discovery is a shared directory on one machine (no cross-host discovery), and liveness is a probe —
   a crashed Editor's record lingers until the next `list_unity_instances` self-heals it.

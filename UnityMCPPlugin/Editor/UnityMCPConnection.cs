@@ -12,7 +12,8 @@ namespace UnityMCP.Editor
 {
     // Unity HOSTS a tiny HTTP server; each MCP server process sends one request per tool call.
     //
-    // The transport is stateless request/response (a POST with a JSON `{ type, data }` body returns
+    // The transport is stateless request/response (an authenticated POST with a JSON
+    // `{ type, data, authToken }` body returns
     // the result as the JSON response, then the socket closes). It used to be a persistent WebSocket,
     // but keeping a long-lived socket alive across Unity's frequent domain reloads is what generated
     // almost all the connection-handling complexity - reconnect, ride-out, and a teardown that kept
@@ -68,7 +69,7 @@ namespace UnityMCP.Editor
         // holds the port) - see LastErrorMessage.
         public static bool IsListening => isListening;
         public static int BoundPort => boundPort;
-        public static Uri ServerUri => new Uri($"http://localhost:{boundPort}/");
+        public static Uri ServerUri => new Uri($"http://127.0.0.1:{boundPort}/");
         public static string InstanceName => InstanceRegistry.Name;
         public static string InstanceId => InstanceRegistry.InstanceId;
         public static string LastErrorMessage => lastErrorMessage;
@@ -196,10 +197,10 @@ namespace UnityMCP.Editor
             try
             {
                 serverCts = new CancellationTokenSource();
-                listener = new TcpListener(IPAddress.IPv6Any, desired);
-                // Accept both IPv4 (127.0.0.1) and IPv6 (::1) clients. If the runtime refuses
-                // dual-mode we still listen on IPv6, which is what "localhost" resolves to here.
-                try { listener.Server.DualMode = true; } catch { }
+                // This endpoint can compile and execute arbitrary C#, so it must never be reachable
+                // from the LAN. Use the explicit IPv4 loopback address and have the MCP side use the
+                // same address, avoiding localhost/IPv6 resolver differences across platforms.
+                listener = new TcpListener(IPAddress.Loopback, desired);
                 // Allow reclaiming our own pinned port right after a domain reload (the previous
                 // listener may linger briefly). Pinning is per-Editor-session, so no other Editor is
                 // contending for this port.
@@ -213,7 +214,7 @@ namespace UnityMCP.Editor
                 lastErrorMessage = "";
                 // Publish (or refresh) this instance's discovery record now that the port is known.
                 InstanceRegistry.Write(boundPort);
-                Debug.Log($"[UnityMCP] HTTP server listening on http://localhost:{boundPort}/  " +
+                Debug.Log($"[UnityMCP] HTTP server listening on http://127.0.0.1:{boundPort}/  " +
                           $"(instance '{InstanceRegistry.Name}' [{InstanceRegistry.InstanceId}])");
                 _ = AcceptLoop(serverCts.Token);
                 return true;
@@ -313,17 +314,17 @@ namespace UnityMCP.Editor
             }
         }
 
-        // Routes a request body ({ type, data }) to the right handler and returns the HTTP status and
+        // Routes an authenticated request body ({ type, data, authToken }) to the right handler and returns the HTTP status and
         // the JSON response payload. The payload IS the response body - there's no envelope or id,
         // since request/response is inherently correlated.
         private static async Task<(int status, string statusText, string json)> Dispatch(string method, string body, CancellationToken token)
         {
-            // Non-POST methods aren't commands. GET/HEAD answer a liveness probe (a browser opening
-            // the URL, or a health check); anything else is rejected with 405.
+            // Non-POST methods aren't commands. GET/HEAD expose only a generic health response;
+            // authenticated identity probes use POST. Anything else is rejected with 405.
             if (method != "POST")
             {
                 if (method == "GET" || method == "HEAD")
-                    return (200, "OK", JsonConvert.SerializeObject(InstanceRegistry.Identity(boundPort)));
+                    return (200, "OK", JsonConvert.SerializeObject(new { status = "ok", server = "UnityMCP" }));
                 return (405, "Method Not Allowed", JsonConvert.SerializeObject(new
                 {
                     error = $"{method} not supported - POST a JSON {{ type, data }} command, or GET for a health check."
@@ -344,6 +345,17 @@ namespace UnityMCP.Editor
             try
             {
                 var msg = JsonConvert.DeserializeObject<Dictionary<string, object>>(body);
+                string authToken = msg != null && msg.ContainsKey("authToken") && msg["authToken"] != null
+                    ? msg["authToken"].ToString()
+                    : null;
+                if (!string.Equals(authToken, InstanceRegistry.AuthToken, StringComparison.Ordinal))
+                {
+                    return (401, "Unauthorized", JsonConvert.SerializeObject(new
+                    {
+                        error = "Missing or invalid UnityMCP authentication token."
+                    }));
+                }
+
                 type = msg != null && msg.ContainsKey("type") ? msg["type"]?.ToString() : null;
                 string dataJson = msg != null && msg.ContainsKey("data") && msg["data"] != null
                     ? msg["data"].ToString()
@@ -411,8 +423,7 @@ namespace UnityMCP.Editor
                         payload = ClearLogPayload();
                         break;
                     case "identity":
-                        // Lets a client confirm which instance answers this port over POST; the GET
-                        // health check returns the same payload.
+                        // Lets an authenticated client confirm which instance answers this port.
                         payload = InstanceRegistry.Identity(boundPort);
                         break;
                     default:

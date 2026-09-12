@@ -17,6 +17,7 @@ export interface InstanceRecord {
   name: string; // project folder leaf - the human handle (may collide; instanceId disambiguates)
   projectPath: string;
   port: number;
+  authToken: string;
   pid?: number;
   unityVersion?: string;
   startedAtUtc?: string;
@@ -64,7 +65,13 @@ export class InstanceRegistry {
       try {
         const text = await fs.readFile(path.join(this.dir, file), "utf8");
         const rec = JSON.parse(text) as InstanceRecord;
-        if (rec && typeof rec.port === "number" && typeof rec.instanceId === "string") {
+        if (
+          rec &&
+          typeof rec.port === "number" &&
+          typeof rec.instanceId === "string" &&
+          typeof rec.authToken === "string" &&
+          rec.authToken.length >= 32
+        ) {
           records.push(rec);
         }
       } catch {
@@ -120,7 +127,14 @@ export class InstanceRegistry {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1500);
     try {
-      const res = await fetch(`http://localhost:${rec.port}/`, {
+      const res = await fetch(`http://127.0.0.1:${rec.port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "identity",
+          data: {},
+          authToken: rec.authToken,
+        }),
         signal: controller.signal,
       });
       if (!res.ok) return "unknown";

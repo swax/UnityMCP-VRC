@@ -16,6 +16,7 @@ export interface RequestSender {
 
 export class UnityConnection implements RequestSender {
   private readonly baseUrl: string;
+  private readonly authToken: string;
   // Human-facing name of the target instance, used in error messages (e.g. "Garibaldi").
   private readonly label: string;
   private shuttingDown = false;
@@ -26,12 +27,14 @@ export class UnityConnection implements RequestSender {
 
   // baseUrl is resolved per target instance (each Editor hosts on its own dynamic port); label is
   // that instance's name, for readable error messages.
-  constructor(opts: { baseUrl: string; label?: string }) {
+  constructor(opts: { baseUrl: string; authToken: string; label?: string }) {
     this.baseUrl = opts.baseUrl;
+    this.authToken = opts.authToken;
     this.label = opts.label ?? opts.baseUrl;
   }
 
-  // Send a tool request to Unity and resolve with its JSON response payload. POSTs { type, data };
+  // Send a tool request to Unity and resolve with its JSON response payload. POSTs the command plus
+  // the per-Editor-session authentication token;
   // the Editor runs the work on its main thread and returns the result as the response body.
   //
   // Failure handling mirrors what the old WebSocket layer did, inferred from the HTTP outcome:
@@ -72,7 +75,12 @@ export class UnityConnection implements RequestSender {
           headers: { "content-type": "application/json" },
           // comment is undefined for internal/legacy callers; JSON.stringify drops it, so Unity
           // simply sees no comment key and the envelope is unchanged.
-          body: JSON.stringify({ type, data, comment }),
+          body: JSON.stringify({
+            type,
+            data,
+            comment,
+            authToken: this.authToken,
+          }),
           signal: controller.signal,
         });
 
